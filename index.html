@@ -1,110 +1,113 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Stormlight Athenaeum</title>
+<title>Stormlight EPUB Reader</title>
 
-<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-
-<script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+<!-- EPUB.js -->
 <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
 
+<!-- Firebase (compat for simplicity) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
 <style>
-body.darkeyes {
-  background: #0b0f14;
-  color: #d6e2f0;
-  font-family: serif;
+body {
+  margin: 0;
+  background: radial-gradient(circle at top, #0a0f1c, #02040a);
+  color: #d6eaff;
+  font-family: Georgia, serif;
+  overflow: hidden;
 }
 
-body.lighteyes {
-  background: #f4f1ea;
-  color: #1a1a1a;
+/* Top bar */
+#topbar {
+  height: 50px;
+  background: rgba(0,0,0,0.6);
+  border-bottom: 1px solid rgba(0,200,255,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 15px;
+  color: #9be7ff;
 }
 
-/* Toolbar */
-#toolbar {
-  padding: 10px;
-  border-bottom: 1px solid #2f3e4f;
+/* File input */
+#fileInput {
+  background: transparent;
+  color: #9be7ff;
 }
 
 /* Viewer */
 #viewer {
-  height: 90vh;
+  height: calc(100vh - 50px);
 }
 
-/* Buttons */
-button {
-  margin-right: 6px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid #2f3e4f;
-  background: #1b2430;
-  color: #d6e2f0;
+/* Glow container */
+.epub-container {
+  box-shadow: 0 0 20px rgba(0,200,255,0.3);
+  border: 1px solid rgba(0,200,255,0.2);
+  border-radius: 10px;
+  animation: glowPulse 3s infinite alternate;
 }
 
-body.lighteyes button {
-  background: #e7dcc7;
-  color: #1a1a1a;
+/* Highlight */
+.highlight {
+  background: rgba(0,200,255,0.3);
+  box-shadow: 0 0 8px rgba(0,200,255,0.8);
 }
 
-/* Auth screen */
-#auth {
-  padding: 20px;
-}
-
-input {
-  margin: 5px;
-  padding: 6px;
-}
-
-/* Notes sidebar */
-#notes {
-  position: fixed;
-  right: 0;
-  top: 0;
-  width: 250px;
-  height: 100%;
-  overflow-y: auto;
-  border-left: 1px solid #2f3e4f;
+/* Popup */
+#popup {
+  position: absolute;
+  background: #0b132b;
+  border: 1px solid #00cfff;
   padding: 10px;
+  border-radius: 8px;
+  display: none;
+  z-index: 999;
 }
 
-.note {
-  margin-bottom: 10px;
-  border-left: 3px solid #c9a94d;
-  padding-left: 6px;
+#popup textarea {
+  width: 200px;
+  height: 60px;
+  background: #02040a;
+  color: white;
+  border: 1px solid #00cfff;
+}
+
+#popup button {
+  margin-top: 5px;
+  background: #00cfff;
+  border: none;
+  padding: 5px;
+  cursor: pointer;
+}
+
+/* Glow animation */
+@keyframes glowPulse {
+  from { box-shadow: 0 0 10px rgba(0,200,255,0.2); }
+  to { box-shadow: 0 0 25px rgba(0,200,255,0.6); }
 }
 </style>
 </head>
 
-<body class="darkeyes">
+<body>
 
-<!-- 🔐 AUTH -->
-<div id="auth">
-  <h2>Stormlight Login</h2>
-  <input id="username" placeholder="Username">
-  <input id="password" type="password" placeholder="Password">
-  <br>
-  <button onclick="signup()">Signup</button>
-  <button onclick="login()">Login</button>
+<div id="topbar">
+  <span>🌩️ Stormlight Reader</span>
+  <input type="file" id="fileInput" accept=".epub">
 </div>
 
-<!-- 📖 APP -->
-<div id="app" style="display:none;">
-  <div id="toolbar">
-    <input type="file" id="fileInput">
-    <button onclick="toggleTheme()">Theme</button>
-    <button onclick="prevPage()">◀</button>
-    <button onclick="nextPage()">▶</button>
-    <button onclick="addNote()">Add Note</button>
-  </div>
+<div id="viewer"></div>
 
-  <div id="viewer"></div>
-  <div id="notes"></div>
+<div id="popup">
+  <textarea id="note" placeholder="Add annotation..."></textarea><br>
+  <button onclick="saveNote()">Save</button>
 </div>
 
 <script>
+// 🔥 FIREBASE CONFIG (REPLACE THIS)
 /* 🔥 FIREBASE CONFIG */
 const firebaseConfig = {
   apiKey: "AIzaSyAnGTs4BOpOxSVk6mQqjn7xqc0-aNKaT0k",
@@ -119,139 +122,113 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-let currentUser = null;
+// GLOBALS
 let book, rendition;
-let notes = [];
-let highlights = [];
+let selectedCfi = null;
+let currentBookId = null;
 
-/* 🔐 AUTH */
-function signup() {
-  const u = username.value;
-  const p = password.value;
-
-  db.ref("users/" + u).once("value").then(snap => {
-    if (snap.exists()) return alert("User exists");
-
-    db.ref("users/" + u).set({ password: p });
-    alert("Account created");
-  });
-}
-
-function login() {
-  const u = username.value;
-  const p = password.value;
-
-  db.ref("users/" + u).once("value").then(snap => {
-    if (!snap.exists()) return alert("No user");
-
-    if (snap.val().password !== p) return alert("Wrong password");
-
-    currentUser = u;
-    auth.style.display = "none";
-    app.style.display = "block";
-
-    loadUserData();
-  });
-}
-
-/* 📖 LOAD EPUB */
-fileInput.addEventListener("change", e => {
+// 📂 HANDLE EPUB UPLOAD
+document.getElementById("fileInput").addEventListener("change", function(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  const url = URL.createObjectURL(file);
-  book = ePub(url);
+  currentBookId = file.name;
 
-  rendition = book.renderTo("viewer", {
-    width: "100%",
-    height: "100%"
-  });
+  const reader = new FileReader();
 
-  rendition.display();
+  reader.onload = function(event) {
+    const arrayBuffer = event.target.result;
 
-  /* Inject highlight style */
-  rendition.hooks.content.register(contents => {
-    const style = contents.document.createElement("style");
-    style.innerHTML = `
-      .hl { background: rgba(255,215,0,0.4); }
-    `;
-    contents.document.head.appendChild(style);
-  });
+    // Load book
+    book = ePub(arrayBuffer);
 
-  /* Restore highlights */
-  highlights.forEach(h => {
-    rendition.annotations.add("highlight", h.cfi, {}, null, "hl");
-  });
+    // Clear previous viewer
+    document.getElementById("viewer").innerHTML = "";
 
-  /* Selection */
-  rendition.on("selected", (cfiRange, contents) => {
-    const text = contents.window.getSelection().toString();
+    rendition = book.renderTo("viewer", {
+      width: "100%",
+      height: "100%"
+    });
 
-    if (confirm("Highlight?")) {
-      rendition.annotations.add("highlight", cfiRange, {}, null, "hl");
+    rendition.display();
 
-      highlights.push({ cfi: cfiRange, text });
-      saveUserData();
-    }
+    setupReaderEvents();
+    loadAnnotations();
+  };
 
-    contents.window.getSelection().removeAllRanges();
-  });
+  reader.readAsArrayBuffer(file);
 });
 
-/* 📄 NAV */
-function nextPage() { rendition.next(); }
-function prevPage() { rendition.prev(); }
+// ✨ SETUP EVENTS
+function setupReaderEvents() {
+  rendition.on("selected", (cfiRange, contents) => {
+    selectedCfi = cfiRange;
 
-/* 📝 NOTES */
-function addNote() {
-  const text = prompt("Note:");
-  if (!text) return;
+    const selection = contents.window.getSelection();
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
 
-  notes.push(text);
-  renderNotes();
-  saveUserData();
-}
+    const popup = document.getElementById("popup");
 
-function renderNotes() {
-  notes.innerHTML = "";
-  const box = document.getElementById("notes");
-  box.innerHTML = "";
-
-  notes.forEach(n => {
-    const d = document.createElement("div");
-    d.className = "note";
-    d.textContent = n;
-    box.appendChild(d);
+    popup.style.top = (rect.top + window.scrollY) + "px";
+    popup.style.left = (rect.left + window.scrollX) + "px";
+    popup.style.display = "block";
   });
 }
 
-/* ☁️ SAVE */
-function saveUserData() {
-  if (!currentUser) return;
+// 💬 SAVE NOTE
+function saveNote() {
+  if (!selectedCfi || !rendition || !currentBookId) return;
 
-  db.ref("data/" + currentUser).set({
-    notes,
-    highlights
+  const text = document.getElementById("note").value;
+
+  db.ref("annotations/" + currentBookId).push({
+    cfi: selectedCfi,
+    note: text,
+    user: "user1",
+    timestamp: Date.now()
+  });
+
+  // Add highlight locally
+  rendition.annotations.add(
+    "highlight",
+    selectedCfi,
+    {},
+    null,
+    "highlight"
+  );
+
+  document.getElementById("popup").style.display = "none";
+  document.getElementById("note").value = "";
+}
+
+// 👥 LOAD REAL-TIME ANNOTATIONS
+function loadAnnotations() {
+  if (!currentBookId) return;
+
+  db.ref("annotations/" + currentBookId).off(); // prevent duplicates
+
+  db.ref("annotations/" + currentBookId).on("child_added", snapshot => {
+    const data = snapshot.val();
+
+    if (rendition) {
+      rendition.annotations.add(
+        "highlight",
+        data.cfi,
+        {},
+        null,
+        "highlight"
+      );
+    }
   });
 }
 
-function loadUserData() {
-  db.ref("data/" + currentUser).once("value").then(snap => {
-    const d = snap.val();
-    if (!d) return;
-
-    notes = d.notes || [];
-    highlights = d.highlights || [];
-
-    renderNotes();
-  });
-}
-
-/* 🌩️ THEME */
-function toggleTheme() {
-  document.body.classList.toggle("darkeyes");
-  document.body.classList.toggle("lighteyes");
-}
+// Hide popup when clicking outside
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#popup")) {
+    document.getElementById("popup").style.display = "none";
+  }
+});
 </script>
 
 </body>
