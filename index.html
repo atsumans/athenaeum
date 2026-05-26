@@ -2,12 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Stormlight EPUB Reader</title>
+<title>Stormlight Reader</title>
 
-<!-- EPUB.js -->
 <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
 
-<!-- Firebase (compat for simplicity) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 
@@ -17,25 +15,45 @@ body {
   background: radial-gradient(circle at top, #0a0f1c, #02040a);
   color: #d6eaff;
   font-family: Georgia, serif;
-  overflow: hidden;
 }
 
-/* Top bar */
+/* Center screens */
+.center-screen {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+/* Hidden */
+.hidden { display: none; }
+
+/* Inputs */
+input {
+  display: block;
+  margin: 10px;
+  padding: 8px;
+  background: #02040a;
+  color: white;
+  border: 1px solid #00cfff;
+}
+
+/* Button */
+button {
+  background: #00cfff;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+}
+
+/* Topbar */
 #topbar {
   height: 50px;
-  background: rgba(0,0,0,0.6);
-  border-bottom: 1px solid rgba(0,200,255,0.3);
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   padding: 0 15px;
-  color: #9be7ff;
-}
-
-/* File input */
-#fileInput {
-  background: transparent;
-  color: #9be7ff;
+  border-bottom: 1px solid rgba(0,200,255,0.3);
 }
 
 /* Viewer */
@@ -43,22 +61,12 @@ body {
   height: calc(100vh - 50px);
 }
 
-/* Glow container */
-.epub-container {
-  box-shadow: 0 0 20px rgba(0,200,255,0.3);
-  border: 1px solid rgba(0,200,255,0.2);
-  border-radius: 10px;
-  animation: glowPulse 3s infinite alternate;
-}
-
-/* Highlight */
-.highlight {
-  background: rgba(0,200,255,0.3);
-  box-shadow: 0 0 8px rgba(0,200,255,0.8);
-}
+/* Highlights */
+.highlight-user1 { background: rgba(0,200,255,0.3); }
+.highlight-user2 { background: rgba(255,100,200,0.3); }
 
 /* Popup */
-#popup {
+#popup, #comments {
   position: absolute;
   background: #0b132b;
   border: 1px solid #00cfff;
@@ -67,166 +75,209 @@ body {
   display: none;
   z-index: 999;
 }
-
-#popup textarea {
-  width: 200px;
-  height: 60px;
-  background: #02040a;
-  color: white;
-  border: 1px solid #00cfff;
-}
-
-#popup button {
-  margin-top: 5px;
-  background: #00cfff;
-  border: none;
-  padding: 5px;
-  cursor: pointer;
-}
-
-/* Glow animation */
-@keyframes glowPulse {
-  from { box-shadow: 0 0 10px rgba(0,200,255,0.2); }
-  to { box-shadow: 0 0 25px rgba(0,200,255,0.6); }
-}
 </style>
 </head>
 
 <body>
 
-<div id="topbar">
-  <span>🌩️ Stormlight Reader</span>
-  <input type="file" id="fileInput" accept=".epub">
+<!-- 🔒 SITE PASSWORD -->
+<div id="siteGate" class="center-screen">
+  <div>
+    <h2>Enter Site Password</h2>
+    <input type="password" id="sitePass">
+    <button onclick="checkSite()">Enter</button>
+  </div>
 </div>
 
-<div id="viewer"></div>
+<!-- 👤 LOGIN -->
+<div id="loginScreen" class="center-screen hidden">
+  <div>
+    <h2>Login</h2>
+    <input id="user" placeholder="Username">
+    <input id="pass" type="password" placeholder="Password">
+    <button onclick="login()">Login</button>
+  </div>
+</div>
 
-<div id="popup">
-  <textarea id="note" placeholder="Add annotation..."></textarea><br>
-  <button onclick="saveNote()">Save</button>
+<!-- 📖 APP -->
+<div id="app" class="hidden">
+  <div id="topbar">
+    <span>🌩️ Stormlight Reader</span>
+    <input type="file" id="fileInput" accept=".epub">
+  </div>
+
+  <div id="viewer"></div>
+
+  <div id="popup">
+    <textarea id="note"></textarea>
+    <button onclick="saveNote()">Save</button>
+  </div>
+
+  <div id="comments"></div>
 </div>
 
 <script>
-// 🔥 FIREBASE CONFIG (REPLACE THIS)
-/* 🔥 FIREBASE CONFIG */
-const firebaseConfig = {
-  apiKey: "AIzaSyAnGTs4BOpOxSVk6mQqjn7xqc0-aNKaT0k",
-  authDomain: "stonewards-14b2c.firebaseapp.com",
-  databaseUrl: "https://stonewards-14b2c-default-rtdb.firebaseio.com/",
-  projectId: "stonewards-14b2c",
-  storageBucket: "stonewards-14b2c.firebasestorage.app",
-  messagingSenderId: "787961212659",
-  appId: "1:787961212659:web:2af6287879b1c3d3d81186"
+// 🔥 CONFIG
+const SITE_PASSWORD = "stormlight"; // change this
+
+const USERS = {
+  "kaladin": "windrunner",
+  "shallan": "lightweaver"
 };
 
+// Firebase
+const firebaseConfig = {
+  apiKey: "YOUR_KEY",
+  authDomain: "...",
+  databaseURL: "...",
+  projectId: "...",
+};
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// GLOBALS
+// 🔒 SITE GATE
+function checkSite() {
+  const val = document.getElementById("sitePass").value;
+  if (val === SITE_PASSWORD) {
+    document.getElementById("siteGate").classList.add("hidden");
+    document.getElementById("loginScreen").classList.remove("hidden");
+  } else {
+    alert("Wrong password");
+  }
+}
+
+// 👤 LOGIN
+let username = null;
+let userColor = null;
+
+function login() {
+  const u = document.getElementById("user").value;
+  const p = document.getElementById("pass").value;
+
+  if (USERS[u] === p) {
+    username = u;
+    userColor = "highlight-" + (Math.random() > 0.5 ? "user1" : "user2");
+
+    document.getElementById("loginScreen").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+  } else {
+    alert("Invalid login");
+  }
+}
+
+// EPUB + DATA
 let book, rendition;
 let selectedCfi = null;
 let currentBookId = null;
 
-// 📂 HANDLE EPUB UPLOAD
-document.getElementById("fileInput").addEventListener("change", function(e) {
+// Upload
+document.getElementById("fileInput").addEventListener("change", e => {
   const file = e.target.files[0];
   if (!file) return;
 
   currentBookId = file.name;
 
   const reader = new FileReader();
-
-  reader.onload = function(event) {
-    const arrayBuffer = event.target.result;
-
-    // Load book
-    book = ePub(arrayBuffer);
-
-    // Clear previous viewer
+  reader.onload = ev => {
+    book = ePub(ev.target.result);
     document.getElementById("viewer").innerHTML = "";
 
-    rendition = book.renderTo("viewer", {
-      width: "100%",
-      height: "100%"
-    });
-
+    rendition = book.renderTo("viewer", { width:"100%", height:"100%" });
     rendition.display();
 
-    setupReaderEvents();
+    setupEvents();
     loadAnnotations();
+    restorePosition();
   };
-
   reader.readAsArrayBuffer(file);
 });
 
-// ✨ SETUP EVENTS
-function setupReaderEvents() {
-  rendition.on("selected", (cfiRange, contents) => {
-    selectedCfi = cfiRange;
+// EVENTS
+function setupEvents() {
+  rendition.on("selected", (cfi, contents) => {
+    selectedCfi = cfi;
 
-    const selection = contents.window.getSelection();
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
+    const rect = contents.window.getSelection()
+      .getRangeAt(0).getBoundingClientRect();
 
     const popup = document.getElementById("popup");
-
-    popup.style.top = (rect.top + window.scrollY) + "px";
-    popup.style.left = (rect.left + window.scrollX) + "px";
+    popup.style.top = rect.top + "px";
+    popup.style.left = rect.left + "px";
     popup.style.display = "block";
   });
-}
 
-// 💬 SAVE NOTE
-function saveNote() {
-  if (!selectedCfi || !rendition || !currentBookId) return;
-
-  const text = document.getElementById("note").value;
-
-  db.ref("annotations/" + currentBookId).push({
-    cfi: selectedCfi,
-    note: text,
-    user: "user1",
-    timestamp: Date.now()
-  });
-
-  // Add highlight locally
-  rendition.annotations.add(
-    "highlight",
-    selectedCfi,
-    {},
-    null,
-    "highlight"
-  );
-
-  document.getElementById("popup").style.display = "none";
-  document.getElementById("note").value = "";
-}
-
-// 👥 LOAD REAL-TIME ANNOTATIONS
-function loadAnnotations() {
-  if (!currentBookId) return;
-
-  db.ref("annotations/" + currentBookId).off(); // prevent duplicates
-
-  db.ref("annotations/" + currentBookId).on("child_added", snapshot => {
-    const data = snapshot.val();
-
-    if (rendition) {
-      rendition.annotations.add(
-        "highlight",
-        data.cfi,
-        {},
-        null,
-        "highlight"
-      );
+  rendition.on("click", e => {
+    if (e.target.className.includes("highlight")) {
+      showComments(e.target.getAttribute("data-cfi"), e);
     }
   });
+
+  rendition.on("relocated", loc => {
+    db.ref("positions/"+currentBookId+"/"+username)
+      .set(loc.start.cfi);
+  });
 }
 
-// Hide popup when clicking outside
-document.addEventListener("click", (e) => {
-  if (!e.target.closest("#popup")) {
-    document.getElementById("popup").style.display = "none";
+// SAVE NOTE
+function saveNote() {
+  const text = document.getElementById("note").value;
+
+  db.ref("annotations/"+currentBookId).push({
+    cfi: selectedCfi,
+    note: text,
+    user: username,
+    color: userColor
+  });
+
+  rendition.annotations.add("highlight", selectedCfi,
+    {"data-cfi": selectedCfi}, null, userColor);
+
+  document.getElementById("popup").style.display="none";
+}
+
+// LOAD ANNOTATIONS
+function loadAnnotations() {
+  db.ref("annotations/"+currentBookId).off();
+
+  db.ref("annotations/"+currentBookId).on("child_added", snap=>{
+    const d = snap.val();
+    rendition.annotations.add("highlight", d.cfi,
+      {"data-cfi": d.cfi}, null, d.color);
+  });
+}
+
+// COMMENTS
+function showComments(cfi, e) {
+  const box = document.getElementById("comments");
+  box.innerHTML="Loading...";
+  box.style.display="block";
+  box.style.top=e.clientY+"px";
+  box.style.left=e.clientX+"px";
+
+  db.ref("annotations/"+currentBookId)
+    .orderByChild("cfi").equalTo(cfi)
+    .once("value", snap=>{
+      box.innerHTML="";
+      snap.forEach(c=>{
+        const d=c.val();
+        box.innerHTML+=`<div><b>${d.user}</b>: ${d.note}</div>`;
+      });
+    });
+}
+
+// RESTORE POSITION
+function restorePosition() {
+  db.ref("positions/"+currentBookId+"/"+username)
+    .once("value", snap=>{
+      if(snap.exists()) rendition.display(snap.val());
+    });
+}
+
+// Hide popups
+document.addEventListener("click", e=>{
+  if(!e.target.closest("#popup") && !e.target.closest("#comments")){
+    document.getElementById("popup").style.display="none";
+    document.getElementById("comments").style.display="none";
   }
 });
 </script>
