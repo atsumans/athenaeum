@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Stormlight Athenaeum</title>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+<script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+<script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
+
+<style>
+body.darkeyes {
+  background: #0b0f14;
+  color: #d6e2f0;
+  font-family: serif;
+}
+
+body.lighteyes {
+  background: #f4f1ea;
+  color: #1a1a1a;
+}
+
+/* Toolbar */
+#toolbar {
+  padding: 10px;
+  border-bottom: 1px solid #2f3e4f;
+}
+
+/* Viewer */
+#viewer {
+  height: 90vh;
+}
+
+/* Buttons */
+button {
+  margin-right: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #2f3e4f;
+  background: #1b2430;
+  color: #d6e2f0;
+}
+
+body.lighteyes button {
+  background: #e7dcc7;
+  color: #1a1a1a;
+}
+
+/* Auth screen */
+#auth {
+  padding: 20px;
+}
+
+input {
+  margin: 5px;
+  padding: 6px;
+}
+
+/* Notes sidebar */
+#notes {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 250px;
+  height: 100%;
+  overflow-y: auto;
+  border-left: 1px solid #2f3e4f;
+  padding: 10px;
+}
+
+.note {
+  margin-bottom: 10px;
+  border-left: 3px solid #c9a94d;
+  padding-left: 6px;
+}
+</style>
+</head>
+
+<body class="darkeyes">
+
+<!-- 🔐 AUTH -->
+<div id="auth">
+  <h2>Stormlight Login</h2>
+  <input id="username" placeholder="Username">
+  <input id="password" type="password" placeholder="Password">
+  <br>
+  <button onclick="signup()">Signup</button>
+  <button onclick="login()">Login</button>
+</div>
+
+<!-- 📖 APP -->
+<div id="app" style="display:none;">
+  <div id="toolbar">
+    <input type="file" id="fileInput">
+    <button onclick="toggleTheme()">Theme</button>
+    <button onclick="prevPage()">◀</button>
+    <button onclick="nextPage()">▶</button>
+    <button onclick="addNote()">Add Note</button>
+  </div>
+
+  <div id="viewer"></div>
+  <div id="notes"></div>
+</div>
+
+<script>
+/* 🔥 FIREBASE CONFIG */
+const firebaseConfig = {
+  apiKey: "AIzaSyAnGTs4BOpOxSVk6mQqjn7xqc0-aNKaT0k",
+  authDomain: "stonewards-14b2c.firebaseapp.com",
+  databaseUrl: "https://stonewards-14b2c-default-rtdb.firebaseio.com/",
+  projectId: "stonewards-14b2c",
+  storageBucket: "stonewards-14b2c.firebasestorage.app",
+  messagingSenderId: "787961212659",
+  appId: "1:787961212659:web:2af6287879b1c3d3d81186"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+let currentUser = null;
+let book, rendition;
+let notes = [];
+let highlights = [];
+
+/* 🔐 AUTH */
+function signup() {
+  const u = username.value;
+  const p = password.value;
+
+  db.ref("users/" + u).once("value").then(snap => {
+    if (snap.exists()) return alert("User exists");
+
+    db.ref("users/" + u).set({ password: p });
+    alert("Account created");
+  });
+}
+
+function login() {
+  const u = username.value;
+  const p = password.value;
+
+  db.ref("users/" + u).once("value").then(snap => {
+    if (!snap.exists()) return alert("No user");
+
+    if (snap.val().password !== p) return alert("Wrong password");
+
+    currentUser = u;
+    auth.style.display = "none";
+    app.style.display = "block";
+
+    loadUserData();
+  });
+}
+
+/* 📖 LOAD EPUB */
+fileInput.addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  book = ePub(url);
+
+  rendition = book.renderTo("viewer", {
+    width: "100%",
+    height: "100%"
+  });
+
+  rendition.display();
+
+  /* Inject highlight style */
+  rendition.hooks.content.register(contents => {
+    const style = contents.document.createElement("style");
+    style.innerHTML = `
+      .hl { background: rgba(255,215,0,0.4); }
+    `;
+    contents.document.head.appendChild(style);
+  });
+
+  /* Restore highlights */
+  highlights.forEach(h => {
+    rendition.annotations.add("highlight", h.cfi, {}, null, "hl");
+  });
+
+  /* Selection */
+  rendition.on("selected", (cfiRange, contents) => {
+    const text = contents.window.getSelection().toString();
+
+    if (confirm("Highlight?")) {
+      rendition.annotations.add("highlight", cfiRange, {}, null, "hl");
+
+      highlights.push({ cfi: cfiRange, text });
+      saveUserData();
+    }
+
+    contents.window.getSelection().removeAllRanges();
+  });
+});
+
+/* 📄 NAV */
+function nextPage() { rendition.next(); }
+function prevPage() { rendition.prev(); }
+
+/* 📝 NOTES */
+function addNote() {
+  const text = prompt("Note:");
+  if (!text) return;
+
+  notes.push(text);
+  renderNotes();
+  saveUserData();
+}
+
+function renderNotes() {
+  notes.innerHTML = "";
+  const box = document.getElementById("notes");
+  box.innerHTML = "";
+
+  notes.forEach(n => {
+    const d = document.createElement("div");
+    d.className = "note";
+    d.textContent = n;
+    box.appendChild(d);
+  });
+}
+
+/* ☁️ SAVE */
+function saveUserData() {
+  if (!currentUser) return;
+
+  db.ref("data/" + currentUser).set({
+    notes,
+    highlights
+  });
+}
+
+function loadUserData() {
+  db.ref("data/" + currentUser).once("value").then(snap => {
+    const d = snap.val();
+    if (!d) return;
+
+    notes = d.notes || [];
+    highlights = d.highlights || [];
+
+    renderNotes();
+  });
+}
+
+/* 🌩️ THEME */
+function toggleTheme() {
+  document.body.classList.toggle("darkeyes");
+  document.body.classList.toggle("lighteyes");
+}
+</script>
+
+</body>
+</html>
